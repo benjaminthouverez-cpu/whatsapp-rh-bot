@@ -98,7 +98,7 @@ def build_answer(user_message: str) -> str:
 
 
 @app.route("/webhook", methods=["POST"])
-@validate_twilio_request
+#@validate_twilio_request
 def webhook():
     """Twilio WhatsApp webhook endpoint."""
     incoming_msg = request.form.get("Body", "").strip()
