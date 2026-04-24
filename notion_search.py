@@ -31,16 +31,23 @@ def _headers() -> dict:
 
 def _api_get(url: str) -> dict | None:
     """GET request with error logging. Returns JSON or None."""
+    logger.info("[NOTION API] GET %s", url)
     try:
         resp = requests.get(url, headers=_headers(), timeout=30)
     except requests.RequestException:
-        logger.exception("Notion API request failed: %s", url)
+        logger.exception("[NOTION API] Request failed: %s", url)
         return None
 
     if resp.status_code == 200:
-        return resp.json()
+        data = resp.json()
+        result_count = len(data.get("results", []))
+        logger.info("[NOTION API] 200 OK — %d results, has_more=%s", result_count, data.get("has_more"))
+        return data
 
-    logger.warning("Notion API %s returned %s: %s", url, resp.status_code, resp.text[:200])
+    logger.error(
+        "[NOTION API] %s returned HTTP %s\n  Response body: %s",
+        url, resp.status_code, resp.text[:500],
+    )
     return None
 
 
@@ -83,18 +90,25 @@ def _fetch_block_texts(block_id: str, depth: int = 0, max_depth: int = 4) -> lis
     synced blocks, etc.) but stops at child_page boundaries — those are
     indexed as separate pages.
     """
+    indent = "  " * depth
+    logger.info("%s[BLOCKS] Fetching blocks for %s (depth=%d)", indent, block_id, depth)
     texts: list[str] = []
     url = f"{NOTION_API}/blocks/{block_id}/children?page_size=100"
 
     while url:
         data = _api_get(url)
         if data is None:
+            logger.error("%s[BLOCKS] Failed to fetch blocks for %s — stopping", indent, block_id)
             break
 
         for block in data.get("results", []):
+            btype = block.get("type", "unknown")
             text = _block_text(block)
             if text.strip():
                 texts.append(text.strip())
+                logger.debug("%s[BLOCKS]   %s: %s", indent, btype, text[:100])
+            else:
+                logger.debug("%s[BLOCKS]   %s: (empty)", indent, btype)
 
             # Recurse into nested containers, but not into child pages
             if (
@@ -102,6 +116,7 @@ def _fetch_block_texts(block_id: str, depth: int = 0, max_depth: int = 4) -> lis
                 and block.get("type") not in ("child_page", "child_database")
                 and depth < max_depth
             ):
+                logger.info("%s[BLOCKS]   ↳ Recursing into %s block %s", indent, btype, block["id"])
                 texts.extend(_fetch_block_texts(block["id"], depth + 1, max_depth))
 
         cursor = data.get("next_cursor")
@@ -111,6 +126,7 @@ def _fetch_block_texts(block_id: str, depth: int = 0, max_depth: int = 4) -> lis
             else None
         )
 
+    logger.info("%s[BLOCKS] Done for %s — extracted %d text chunks", indent, block_id, len(texts))
     return texts
 
 
